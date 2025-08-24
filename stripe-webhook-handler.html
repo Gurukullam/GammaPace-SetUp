@@ -990,11 +990,45 @@
                 
             } catch (error) {
                 logEvent(`❌ Payment processing failed: ${error.message}`, 'error');
-                return {
-                    success: false,
-                    error: error.message,
-                    type: 'payment_error'
-                };
+                logEvent(`❌ Full error details: ${JSON.stringify(error)}`, 'error');
+                
+                // Handle specific Stripe errors
+                if (error.message.includes('card_declined')) {
+                    return {
+                        success: false,
+                        error: 'Your card was declined. Please try a different payment method.',
+                        type: 'card_error',
+                        decline_code: 'card_declined'
+                    };
+                } else if (error.message.includes('insufficient_funds')) {
+                    return {
+                        success: false,
+                        error: 'Insufficient funds. Please check your account balance.',
+                        type: 'card_error',
+                        decline_code: 'insufficient_funds'
+                    };
+                } else if (error.message.includes('expired_card')) {
+                    return {
+                        success: false,
+                        error: 'Your card has expired. Please use a different payment method.',
+                        type: 'card_error',
+                        decline_code: 'expired_card'
+                    };
+                } else if (error.message.includes('invalid_cvc')) {
+                    return {
+                        success: false,
+                        error: 'Invalid security code. Please check your CVC and try again.',
+                        type: 'card_error',
+                        decline_code: 'invalid_cvc'
+                    };
+                } else {
+                    return {
+                        success: false,
+                        error: error.message || 'Payment processing failed',
+                        type: 'payment_error',
+                        details: error.toString()
+                    };
+                }
             }
         }
 
@@ -1002,30 +1036,60 @@
         // MESSAGE HANDLING FOR FRONTEND
         // ========================================
 
-        /**
-         * Handle messages from frontend (payment requests)
-         */
-        window.addEventListener('message', async function(event) {
-            // Security check - only accept messages from our domain
-            if (event.origin !== 'https://gurukullam.github.io') {
-                return;
-            }
-            
-            if (event.data.type === 'CREATE_PAYMENT_INTENT') {
-                logEvent('📨 Received payment intent request from frontend', 'info');
-                
-                const result = await handlePaymentIntentRequest(event.data.payload);
-                
-                // Send response back to frontend
-                event.source.postMessage({
-                    type: 'PAYMENT_INTENT_RESPONSE',
-                    requestId: event.data.requestId,
-                    result: result
-                }, event.origin);
-                
-                logEvent(`📤 Sent payment response to frontend: ${result.success ? 'SUCCESS' : 'ERROR'}`, result.success ? 'success' : 'error');
-            }
-        });
+                 /**
+          * Handle messages from frontend (payment requests)
+          */
+         window.addEventListener('message', async function(event) {
+             try {
+                 logEvent(`📨 Received message from origin: ${event.origin}`, 'info');
+                 
+                 // Security check - only accept messages from our domain
+                 if (event.origin !== 'https://gurukullam.github.io') {
+                     logEvent(`❌ Rejected message from unauthorized origin: ${event.origin}`, 'error');
+                     return;
+                 }
+                 
+                 logEvent(`📋 Message data: ${JSON.stringify(event.data)}`, 'info');
+                 
+                 if (event.data.type === 'CREATE_PAYMENT_INTENT') {
+                     logEvent('📨 Received payment intent request from frontend', 'info');
+                     logEvent(`🔍 Request ID: ${event.data.requestId}`, 'info');
+                     logEvent(`📋 Payload: ${JSON.stringify(event.data.payload)}`, 'info');
+                     
+                     const result = await handlePaymentIntentRequest(event.data.payload);
+                     
+                     logEvent(`🔄 Processing result: ${JSON.stringify(result)}`, 'info');
+                     
+                     // Send response back to frontend
+                     event.source.postMessage({
+                         type: 'PAYMENT_INTENT_RESPONSE',
+                         requestId: event.data.requestId,
+                         result: result
+                     }, event.origin);
+                     
+                     logEvent(`📤 Sent payment response to frontend: ${result.success ? 'SUCCESS' : 'ERROR'}`, result.success ? 'success' : 'error');
+                 } else {
+                     logEvent(`❌ Unknown message type: ${event.data.type}`, 'error');
+                 }
+             } catch (error) {
+                 logEvent(`❌ Error handling message: ${error.message}`, 'error');
+                 
+                 // Send error response back to frontend if possible
+                 try {
+                     event.source.postMessage({
+                         type: 'PAYMENT_INTENT_RESPONSE',
+                         requestId: event.data.requestId || 'unknown',
+                         result: {
+                             success: false,
+                             error: `Message handling error: ${error.message}`,
+                             type: 'webhook_handler_error'
+                         }
+                     }, event.origin);
+                 } catch (responseError) {
+                     logEvent(`❌ Failed to send error response: ${responseError.message}`, 'error');
+                 }
+             }
+         });
 
         // Make payment processing available globally
         window.processPaymentIntent = handlePaymentIntentRequest;
