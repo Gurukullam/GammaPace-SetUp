@@ -844,7 +844,72 @@
                 
                 logEvent(`📋 Payment details: ${plan_type} plan for ${customer_name} (${customer_email}) - ${amount/100} ${currency.toUpperCase()}`, 'info');
                 
-                // Create Stripe payment intent using fetch API (browser-compatible)
+                // Step 1: Create or find Stripe customer
+                logEvent('👤 Creating/finding Stripe customer...', 'info');
+                
+                // First, try to find existing customer by email
+                let customer;
+                const existingCustomerResponse = await fetch(`https://api.stripe.com/v1/customers?email=${encodeURIComponent(customer_email)}&limit=1`, {
+                    headers: {
+                        'Authorization': `Bearer ${WEBHOOK_CONFIG.stripeSecretKey}`
+                    }
+                });
+                
+                if (existingCustomerResponse.ok) {
+                    const existingCustomers = await existingCustomerResponse.json();
+                    if (existingCustomers.data && existingCustomers.data.length > 0) {
+                        customer = existingCustomers.data[0];
+                        logEvent(`✅ Found existing customer: ${customer.id}`, 'success');
+                    }
+                }
+                
+                // If no existing customer, create new one
+                if (!customer) {
+                    const createCustomerResponse = await fetch('https://api.stripe.com/v1/customers', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${WEBHOOK_CONFIG.stripeSecretKey}`,
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: new URLSearchParams({
+                            'name': customer_name,
+                            'email': customer_email,
+                            'metadata[plan_type]': plan_type,
+                            'metadata[user_country]': user_country || 'Unknown',
+                            'metadata[source]': 'GammaPace IELTS'
+                        })
+                    });
+                    
+                    if (!createCustomerResponse.ok) {
+                        const errorData = await createCustomerResponse.json();
+                        throw new Error(`Customer creation failed: ${errorData.error?.message || 'Unknown error'}`);
+                    }
+                    
+                    customer = await createCustomerResponse.json();
+                    logEvent(`✅ Created new customer: ${customer.id}`, 'success');
+                }
+                
+                // Step 2: Attach payment method to customer
+                logEvent('🔗 Attaching payment method to customer...', 'info');
+                const attachResponse = await fetch(`https://api.stripe.com/v1/payment_methods/${payment_method_id}/attach`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${WEBHOOK_CONFIG.stripeSecretKey}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: new URLSearchParams({
+                        'customer': customer.id
+                    })
+                });
+                
+                if (!attachResponse.ok) {
+                    const errorData = await attachResponse.json();
+                    logEvent(`⚠️ Payment method attach failed: ${errorData.error?.message}`, 'warning');
+                    // Continue anyway - payment might still work
+                }
+                
+                // Step 3: Create Stripe payment intent (separate from confirmation)
+                logEvent('💳 Creating payment intent with customer...', 'info');
                 const stripeResponse = await fetch('https://api.stripe.com/v1/payment_intents', {
                     method: 'POST',
                     headers: {
@@ -854,9 +919,9 @@
                     body: new URLSearchParams({
                         'amount': amount,
                         'currency': currency.toLowerCase(),
+                        'customer': customer.id,
                         'payment_method': payment_method_id,
                         'confirmation_method': 'manual',
-                        'confirm': 'true',
                         'return_url': 'https://gurukullam.github.io/GammaPace/',
                         'metadata[plan_type]': plan_type,
                         'metadata[customer_name]': customer_name,
@@ -873,8 +938,29 @@
                     throw new Error(`Stripe API error: ${errorData.error?.message || 'Unknown error'}`);
                 }
                 
-                const paymentIntent = await stripeResponse.json();
+                let paymentIntent = await stripeResponse.json();
                 logEvent(`✅ Payment intent created: ${paymentIntent.id} - Status: ${paymentIntent.status}`, 'success');
+                
+                // Step 4: Confirm the payment intent (matching your successful flow!)
+                logEvent('🔒 Confirming payment intent...', 'info');
+                const confirmResponse = await fetch(`https://api.stripe.com/v1/payment_intents/${paymentIntent.id}/confirm`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${WEBHOOK_CONFIG.stripeSecretKey}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: new URLSearchParams({
+                        'return_url': 'https://gurukullam.github.io/GammaPace/'
+                    })
+                });
+                
+                if (!confirmResponse.ok) {
+                    const errorData = await confirmResponse.json();
+                    throw new Error(`Payment confirmation failed: ${errorData.error?.message || 'Unknown error'}`);
+                }
+                
+                paymentIntent = await confirmResponse.json();
+                logEvent(`🎉 Payment intent confirmed: ${paymentIntent.id} - Status: ${paymentIntent.status}`, 'success');
                 
                 // Calculate subscription dates
                 const startDate = await getCurrentDateInUTC4();
@@ -889,9 +975,11 @@
                         currency: paymentIntent.currency
                     },
                     customer: {
+                        id: customer.id,
                         email: customer_email,
                         name: customer_name
                     },
+                    customerId: customer.id,
                     subscription_data: {
                         plan_type: plan_type,
                         start_date: startDate.toISOString(),
