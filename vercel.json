@@ -9,27 +9,52 @@
   ],
   "routes": [
     {
-      "src": "/api/stripe/webhook",
-      "dest": "/api/stripe/webhook.js"
+      "src": "/api/stripe/create-payment-intent",
+      "dest": "/api/stripe/create-payment-intent.js",
+      "methods": ["POST", "OPTIONS"]
     },
     {
-      "src": "/api/stripe/create-payment-intent",
-      "dest": "/api/stripe/create-payment-intent.js"
+      "src": "/api/stripe/webhook",
+      "dest": "/api/stripe/webhook.js",
+      "methods": ["POST", "OPTIONS"]
     },
     {
       "src": "/api/health",
-      "dest": "/api/health.js"
+      "dest": "/api/health.js",
+      "methods": ["GET", "OPTIONS"]
     }
   ],
   "env": {
     "NODE_ENV": "production"
   },
   "functions": {
-    "api/stripe/webhook.js": {
-      "maxDuration": 10
-    },
     "api/stripe/create-payment-intent.js": {
+      "maxDuration": 30
+    },
+    "api/stripe/webhook.js": {
+      "maxDuration": 30
+    },
+    "api/health.js": {
       "maxDuration": 10
     }
-  }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://gurukullam.github.io"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ]
 } 
