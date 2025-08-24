@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "name": "gammapace-backend",
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/stripe/webhook",
+      "dest": "/api/stripe/webhook.js"
+    },
+    {
+      "src": "/api/stripe/create-payment-intent",
+      "dest": "/api/stripe/create-payment-intent.js"
+    },
+    {
+      "src": "/api/health",
+      "dest": "/api/health.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "functions": {
+    "api/stripe/webhook.js": {
+      "maxDuration": 10
+    },
+    "api/stripe/create-payment-intent.js": {
+      "maxDuration": 10
+    }
+  }
+} 
