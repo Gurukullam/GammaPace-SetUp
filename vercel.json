@@ -1,12 +1,6 @@
 {
   "version": 2,
   "name": "gammapace-backend",
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    }
-  ],
   "routes": [
     {
       "src": "/api/stripe/create-payment-intent",
