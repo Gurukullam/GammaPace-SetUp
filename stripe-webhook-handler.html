@@ -816,6 +816,133 @@
             return true;
         }
 
+        // ========================================
+        // PAYMENT INTENT PROCESSING
+        // ========================================
+
+        /**
+         * Handle payment intent creation requests from frontend
+         */
+        async function handlePaymentIntentRequest(paymentData) {
+            logEvent('🚀 Processing payment intent request...', 'info');
+            
+            try {
+                const { 
+                    amount, 
+                    currency, 
+                    payment_method_id,
+                    customer_name,
+                    customer_email,
+                    plan_type,
+                    user_country 
+                } = paymentData;
+                
+                // Validate required fields
+                if (!amount || !currency || !payment_method_id || !customer_name || !customer_email || !plan_type) {
+                    throw new Error('Missing required payment fields');
+                }
+                
+                logEvent(`📋 Payment details: ${plan_type} plan for ${customer_name} (${customer_email}) - ${amount/100} ${currency.toUpperCase()}`, 'info');
+                
+                // Create Stripe payment intent using fetch API (browser-compatible)
+                const stripeResponse = await fetch('https://api.stripe.com/v1/payment_intents', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${WEBHOOK_CONFIG.stripeSecretKey}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: new URLSearchParams({
+                        'amount': amount,
+                        'currency': currency.toLowerCase(),
+                        'payment_method': payment_method_id,
+                        'confirmation_method': 'manual',
+                        'confirm': 'true',
+                        'return_url': 'https://gurukullam.github.io/GammaPace/',
+                        'metadata[plan_type]': plan_type,
+                        'metadata[customer_name]': customer_name,
+                        'metadata[customer_email]': customer_email,
+                        'metadata[user_country]': user_country || 'Unknown',
+                        'metadata[subscription_type]': 'one_time_subscription',
+                        'metadata[exact_billing_guarantee]': 'true',
+                        'description': `GammaPace IELTS ${plan_type} Plan Subscription`
+                    })
+                });
+                
+                if (!stripeResponse.ok) {
+                    const errorData = await stripeResponse.json();
+                    throw new Error(`Stripe API error: ${errorData.error?.message || 'Unknown error'}`);
+                }
+                
+                const paymentIntent = await stripeResponse.json();
+                logEvent(`✅ Payment intent created: ${paymentIntent.id} - Status: ${paymentIntent.status}`, 'success');
+                
+                // Calculate subscription dates
+                const startDate = await getCurrentDateInUTC4();
+                const endDate = calculateSubscriptionEndDate(startDate, plan_type);
+                
+                return {
+                    success: true,
+                    payment_intent: {
+                        id: paymentIntent.id,
+                        status: paymentIntent.status,
+                        amount: paymentIntent.amount,
+                        currency: paymentIntent.currency
+                    },
+                    customer: {
+                        email: customer_email,
+                        name: customer_name
+                    },
+                    subscription_data: {
+                        plan_type: plan_type,
+                        start_date: startDate.toISOString(),
+                        end_date: endDate.toISOString(),
+                        amount_paid: amount,
+                        currency: currency
+                    }
+                };
+                
+            } catch (error) {
+                logEvent(`❌ Payment processing failed: ${error.message}`, 'error');
+                return {
+                    success: false,
+                    error: error.message,
+                    type: 'payment_error'
+                };
+            }
+        }
+
+        // ========================================
+        // MESSAGE HANDLING FOR FRONTEND
+        // ========================================
+
+        /**
+         * Handle messages from frontend (payment requests)
+         */
+        window.addEventListener('message', async function(event) {
+            // Security check - only accept messages from our domain
+            if (event.origin !== 'https://gurukullam.github.io') {
+                return;
+            }
+            
+            if (event.data.type === 'CREATE_PAYMENT_INTENT') {
+                logEvent('📨 Received payment intent request from frontend', 'info');
+                
+                const result = await handlePaymentIntentRequest(event.data.payload);
+                
+                // Send response back to frontend
+                event.source.postMessage({
+                    type: 'PAYMENT_INTENT_RESPONSE',
+                    requestId: event.data.requestId,
+                    result: result
+                }, event.origin);
+                
+                logEvent(`📤 Sent payment response to frontend: ${result.success ? 'SUCCESS' : 'ERROR'}`, result.success ? 'success' : 'error');
+            }
+        });
+
+        // Make payment processing available globally
+        window.processPaymentIntent = handlePaymentIntentRequest;
+
         // Export for serverless function use
         if (typeof module !== 'undefined' && module.exports) {
             module.exports = { 
@@ -823,7 +950,8 @@
                 getCurrentDateInUTC4,
                 calculateSubscriptionEndDate,
                 getPlanDisplayName,
-                validateFirebaseUpdateData
+                validateFirebaseUpdateData,
+                handlePaymentIntentRequest
             };
         }
     </script>
